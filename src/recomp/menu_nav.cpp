@@ -10,7 +10,9 @@
 //   - the pointer is then kept on the selected item's centre (clipped to the screen) every sample,
 //     so it follows slide-in animations and scrolling lists, until a free pointer device moves it;
 //   - a choice box (Item::choice: dialogue choices, the pockets' item popup) that appears gets the
-//     pointer on its highlighted row at once, so A takes it and the D-pad moves from it;
+//     pointer on its highlighted row at once, so A takes it and the D-pad moves from it; a popup
+//     window (Item::popup: the game's message dialogs with OK / Yes / No) likewise, on its
+//     default button (CF_POPUP_SNAP=0: not, A/B);
 //   - "Recenter pointer" jumps to the item nearest the pointer instead of the screen centre;
 //   - the field HUD (toolbar) alone does not take the D-pad / stick (they change tools and walk):
 //     "Recenter pointer" enters it, B / Recenter / moving the pointer leaves it.
@@ -64,6 +66,14 @@ const char* const sChoicePlaceEnv = std::getenv("CF_CHOICE_PLACE");
 const bool sNoChoicePlace = sChoicePlaceEnv && *sChoicePlaceEnv == '0';
 const bool sChoiceWaitOpen = sChoicePlaceEnv && std::strcmp(sChoicePlaceEnv, "wait") == 0;
 constexpr u32 kCursorFrames = 2, kChoiceWaitMax = 20;
+// A/B CF_POPUP_SNAP=0: popup windows (Item::popup) are neither modal nor placed (before branch
+// popup-snap: the pockets under "You can't hold any more Bells!" stayed navigable).
+const bool sNoPopupModal = [] {
+    const char* v = std::getenv("CF_POPUP_SNAP");
+    return v && *v == '0';
+}();
+// Modal items: choice box rows and popup buttons. While one is up only its layout takes moves.
+bool isModal(const Item& it) { return it.choice || (it.popup && !sNoPopupModal); }
 
 std::mutex sMutex;
 std::vector<Item> sCollect, sPublished;
@@ -236,6 +246,9 @@ std::vector<Item> navigableWhole(const std::vector<Item>& in, bool& menu, bool& 
 //   - a choice box (Item::choice: dialogue choices, the pockets' item popup, the design list's
 //     "Wear / ... / Quit", the Photos window's SD Card box) is modal: while one is up only its
 //     rows (and the field toolbar's tested items) are navigable, not the screen it was opened from;
+//     a popup window (Item::popup: the game's message dialogs, "You can't hold any more Bells!" OK
+//     over the pockets, "Quit without writing anything?" over the letter keyboard; branch
+//     popup-snap) the same, without the toolbar; of two the one drawn last;
 //   - a screen the game hit-tests is in front of the items only seen drawn that lie under its
 //     own items: those are left out, one by one. The recycle bin and the letters are drawn over
 //     the upper half of the pockets (player circle, wallet and letter buttons hidden under them)
@@ -332,8 +345,24 @@ std::vector<Item> navigable(const std::vector<Item>& in, bool& menu, bool& hud) 
                         items.end());
         // A choice box is modal: the screen it was opened from (the pockets under "Drop / Quit",
         // the SD Card button under "Save Photo / Erase All / Quit") takes no moves while it is up.
-        if (std::any_of(items.begin(), items.end(), [](const Item& it) { return it.choice; }))
-            items.erase(std::remove_if(items.begin(), items.end(), [](const Item& it) { return !it.hud && !it.choice; }), items.end());
+        // A popup window (Item::popup: the game's message dialogs with OK / Yes / No, branch
+        // popup-snap) likewise, and the toolbar too: the dialog covers the whole screen with its
+        // backdrop, so a move off its buttons must not land on a toolbar slot. With two of them up
+        // (a dialog over a choice box) the one drawn last is in front.
+        if (std::any_of(items.begin(), items.end(), isModal)) {
+            u16 front = 0;
+            bool popup = false;
+            for (const auto& it : items)
+                if (isModal(it)) front = std::max(front, it.layer);
+            for (const auto& it : items)
+                if (isModal(it) && it.layer == front) popup |= it.popup;
+            items.erase(std::remove_if(items.begin(), items.end(),
+                                       [&](const Item& it) {
+                                           if (!isModal(it)) return !it.hud || popup;
+                                           return front && it.layer && it.layer != front;
+                                       }),
+                        items.end());
+        }
     }
     menu = hud = false;
     for (const auto& it : items) (it.hud ? hud : menu) = true;
@@ -644,7 +673,7 @@ void traceSet(const std::vector<Item>& published, u32 frame) {
         std::snprintf(buf, sizeof buf,
                       "%s{\"k\":\"%08X\",\"n\":\"%s\",\"g\":\"%08X\",\"b\":[%.4f,%.4f,%.4f,%.4f],\"hud\":%d,\"t\":%d,\"l\":%u,\"ch\":%d,\"nav\":%d}",
                       i ? "," : "", it.key, name.c_str(), it.group, it.x0, it.y0, it.x1, it.y1, it.hud ? 1 : 0, it.tested ? 1 : 0,
-                      unsigned(it.layer), it.choice ? 1 : 0, isNav(it) ? 1 : 0);
+                      unsigned(it.layer), it.choice ? 1 : it.popup ? 2 : 0, isNav(it) ? 1 : 0);
         out += buf;
     }
     out += "],\"moves\":[";
@@ -788,11 +817,13 @@ Output apply(int chan, const Input& in) {
         return out;
     }
 
-    // Choice boxes up now (navigable rows: a box behind another screen does not count).
+    // Choice boxes / popup windows up now (navigable rows / buttons: a box behind another screen
+    // does not count). Below, "box" means either.
     std::vector<const Item*> rows;
     if (!sNoChoicePlace)
         for (const auto& it : items)
-            if (it.choice) rows.push_back(&it);
+            if (isModal(it)) rows.push_back(&it);
+    const char* const boxName = !rows.empty() && rows[0]->popup ? "popup" : "choice box";
     u32 sig = 0;
     if (!rows.empty()) {
         std::vector<u32> keys;
@@ -809,16 +840,24 @@ Output apply(int chan, const Input& in) {
         if (st.beforeSel && findKey(items, st.beforeSel) && (!st.selected || !findKey(items, st.selected))) {
             st.selected = st.beforeSel;
             st.haveMem = false;
-            if (sLog) log("[nav] remote %d: choice box closed, back to %s", chan + 1, findKey(items, st.beforeSel)->name);
+            if (sLog) log("[nav] remote %d: choice box / popup closed, back to %s", chan + 1, findKey(items, st.beforeSel)->name);
         }
         st.beforeSel = 0;
     } else if (!rows.empty() && (!st.choiceUp || sig != st.choiceSig)) {
         // A box appeared (or another one replaced it): placed below (on its first frame).
         // (the item under the box is no longer navigable: the box in front is modal)
         const Item* sel = st.selected ? findKey(published, st.selected) : nullptr;
-        if (sel && !sel->choice) st.beforeSel = st.selected;
-        else if (!st.choiceUp) st.beforeSel = 0;
-        if (sel && sel->choice) st.selected = 0;  // a row of the box before: not this box's
+        if (sel && !isModal(*sel)) {
+            st.beforeSel = st.selected;
+        } else if (!st.choiceUp) {
+            // Opened with the pointer (A on a slot, no snapped selection): the item under it.
+            st.beforeSel = 0;
+            std::vector<Item> under;
+            for (const auto& it : published)
+                if (!isModal(it) && !it.hud) under.push_back(it);
+            if (const Item* it = itemAt(under, in.px, in.py)) st.beforeSel = it->key;
+        }
+        if (sel && isModal(*sel)) st.selected = 0;  // a row of the box before: not this box's
         st.choiceUp = true;
         st.choiceSig = sig;
         st.choicePlaced = false;
@@ -827,7 +866,7 @@ Output apply(int chan, const Input& in) {
         st.cursorKey = 0;
         st.cursorFrames = 0;
         st.choiceTested = 0;
-        if (sLog) log("[nav] remote %d: choice box up (%zu rows) at frame %u", chan + 1, rows.size(), publishedFrame);
+        if (sLog) log("[nav] remote %d: %s up (%zu rows) at frame %u", chan + 1, boxName, rows.size(), publishedFrame);
     }
     if (mouseMode) {
         // The mouse played last (Auto): the D-pad and the stick reach the game, nothing is held,
@@ -1021,6 +1060,19 @@ Output apply(int chan, const Input& in) {
          st.choiceSeen >= kChoiceWaitMax || move || recenter)) {
         const Item* to = nullptr;
         if (st.cursorFrames > 0) to = findKey(items, st.cursorKey);
+        if (!to && !rows.empty() && rows[0]->popup) {
+            // A popup's default button: its only one (OK), else the first (left) of its bottom row:
+            // "No" of "Close without saving?" / "Do you want to order ...?" (the safe answer), the
+            // OK of a "How many?" popup below its slider.
+            for (const Item* r : rows) {
+                if (!to) {
+                    to = r;
+                    continue;
+                }
+                const float dy = (r->y0 + r->y1 - to->y0 - to->y1) * 0.5f;
+                if (dy > 0.02f || (dy > -0.02f && r->x0 < to->x0)) to = r;
+            }
+        }
         if (!to)
             for (const Item* r : rows)
                 if (!to || r->y0 < to->y0) to = r;
@@ -1031,8 +1083,9 @@ Output apply(int chan, const Input& in) {
             out.placed = true;
             sLastPlacement.store(game::guestFrames(), std::memory_order_relaxed);
             if (sLog)
-                log("[nav] remote %d: choice box: pointer onto %s (%s) after %u frames", chan + 1, to->name,
-                    st.cursorFrames > 0 && to->key == st.cursorKey ? "game's cursor" : "top row", st.choiceSeen);
+                log("[nav] remote %d: %s: pointer onto %s (%s) after %u frames", chan + 1, boxName, to->name,
+                    st.cursorFrames > 0 && to->key == st.cursorKey ? "game's cursor" : to->popup ? "default button" : "top row",
+                    st.choiceSeen);
         }
         recenter = false;  // the press placed it
     }

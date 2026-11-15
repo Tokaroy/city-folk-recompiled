@@ -131,15 +131,24 @@ struct Pending {
     u32 pane;
     std::string name;
     float x0, y0, x1, y1;
-    bool choice = false, cursor = false;
+    bool choice = false, cursor = false, popup = false;
 };
 
 // Choice boxes (Layout/chc_win.arc, the same file on every disc): the dialogue choices and the
 // pockets' "Drop / Carry / Quit" popup. Rows B_msg_00..04 (the unused ones hidden), the window
 // N_chcWin_all, and csr_00 = the game's own cursor (the arrow in front of the highlighted row; it
 // starts on the box's default row and follows the pointer). Noted during the pane walks.
+// Popup windows (branch popup-snap): the game's message dialogs, Layout/cmn_btn.arc
+// cmn_dialog_A/B/C_00 (the same file on every disc): a message T_dialg_00 and up to three buttons
+// B_dialgBtn_00..02 (OK alone = _02 in the middle) in the window N_dialg (A, B; with the
+// screen-wide backdrop back00) or N_dialg_all (C). Every "You can't ...!" / "There's no space ...!"
+// message of the menus ("You can't hold any more Bells!" over the pockets), and the menus' yes / no
+// questions ("Close without saving?"), come through one dialog class with these layouts. Its
+// buttons are modal like a choice box's rows (menu_nav.h Item::popup). Also the "How many?"
+// slider popup (anlg_chc_win.arc: N_anlgChcWin_all, slider B_csr_00, OK B_btn_00).
 struct ChoiceScan {
     bool choice = false;  // the layout is a choice box
+    bool popup = false;   // the layout is a popup window
     bool cursor = false;  // csr_00 visible, centre y (layout coordinates) in cy
     float cy = 0;
 };
@@ -148,7 +157,9 @@ void scanChoicePane(u32 p, ChoiceScan& cs) {
     const u8 c0 = u8(rd8(p + 0xBC));
     if (c0 != 'N' && c0 != 'c') return;
     const std::string n = paneName(p);
-    if (n == "N_chcWin_all") {
+    if (n == "N_dialg" || n == "N_dialg_all" || n == "N_anlgChcWin_all") {
+        cs.popup = true;
+    } else if (n == "N_chcWin_all") {
         cs.choice = true;
     } else if (n == "csr_00" && visibleChain(p)) {
         float x0, y0, x1, y1;
@@ -166,6 +177,10 @@ void scanChoicePane(u32 p, ChoiceScan& cs) {
 // the pointer, or none (-1, csr_00 hidden). So csr_00 shows the box's own highlight only while the
 // game does not hit-test the rows (menu_nav.cpp uses it then, and the top row otherwise).
 void markChoices(std::vector<Pending>& v, const ChoiceScan& cs) {
+    if (cs.popup && !cs.choice) {
+        for (auto& p : v) p.popup = true;  // every Bounding pane of a popup is one of its buttons
+        return;
+    }
     if (!cs.choice) return;
     for (auto& p : v) {
         if (p.name.rfind("B_msg_", 0) != 0) continue;
@@ -179,6 +194,7 @@ void publish(const std::vector<Pending>& v, const menunav::Scale& s, u32 group, 
         menunav::Item it;
         it.choice = p.choice;
         it.cursor = p.cursor;
+        it.popup = p.popup;
         float ax, ay, bx, by;
         menunav::layoutToPointer(s, p.x0, p.y0, ax, ay);
         menunav::layoutToPointer(s, p.x1, p.y1, bx, by);

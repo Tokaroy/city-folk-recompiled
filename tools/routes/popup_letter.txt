@@ -1,0 +1,27 @@
+# Popup over the letter keyboard (docs/CONTROLS.md "Popup windows over a menu"): pockets ->
+# stationery -> Write a Letter -> addressee -> keyboard (as typing_letter.txt), then B on the
+# empty letter: "Quit without writing anything?" (a two-button popup). D-pad on it, B / A.
+# Env CF_FIXTURE=user-town-clean;CF_FF=1-4400;CF_GIVE_ITEM=5600:9643;CF_NAV_LOG=1
+include continue_any.txt
+5240:A
++60:A ~6
+after link d_bgo_drawNP 2
++1400:@-0.82/0.82
++30:A
++200:@0.56/-0.26
++40:A
++100:@0.58/-0.40
++40:A
++300:@0.0/-0.08
++40:A
++150:@0.66/0.78
++40:A
++400:B
++200:RIGHT
++80:LEFT
++80:DOWN
++80:UP
++80:RIGHT
++150:B
++200:B
++200:B
