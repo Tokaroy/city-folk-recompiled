@@ -4,8 +4,8 @@
 // directions, so the selection code can be checked against every logged screen without a game run.
 // Built by check.py (clang++ -DMENUNAV_REPLAY with src/recomp/menu_nav.cpp).
 //   stdin:  "set <id> <menu|toolbar> <n>" then n lines "<key> <group> <hud> <tested> <layer> <x0> <y0> <x1> <y1>
-//           [<choice>]" (every visible item of the frame; choice = a choice box row, traces since
-//           choice-snap round 2)
+//           [<choice>]" (every visible item of the frame; choice = 1 a choice box row, traces since
+//           choice-snap round 2; 2 a popup window's button, since popup-snap)
 //   stdout: "n <id> <key>" for each navigable item (the modal rules applied), "m <id> <from> <dir>
 //           <to|->" and "c <id> <key>" for containers
 //   argv[1] == "old": the first version's search (CF_NAV_OLD); "whole": the first round's modal
@@ -63,7 +63,8 @@ int main(int argc, char** argv) {
             int hud = 0, tested = 0, choice = 0;
             std::sscanf(line, "%x %x %d %d %u %f %f %f %f %d", &key, &group, &hud, &tested, &layer, &it.x0, &it.y0, &it.x1, &it.y1,
                         &choice);
-            it.choice = choice != 0;
+            it.choice = choice == 1;
+            it.popup = choice == 2;
             it.key = key;
             it.group = group;
             it.hud = hud != 0;

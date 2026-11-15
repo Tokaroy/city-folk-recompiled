@@ -112,7 +112,10 @@ def screen(gs):
     if has("B_mapBtn") or has("B_scrlBtn"):
         return "town map"
     if has("BC_0") or has("BC_1"):
-        return "pockets" + (" + submenu" if has("B_msg") else "")
+        return "pockets" + (" + submenu" if has("B_msg") else "") + (" + popup" if has("B_dialgBtn") else "")
+    if has("B_dialgBtn"):
+        return "popup"
+
     if has("B_msg"):
         return "choice box"
     if has("B_cmnBtnA"):
@@ -159,6 +162,12 @@ def check_set(st, moves, warn, navkeys):
         for g in gs:
             if not g.hud and not g.ch:
                 errs.append(("-", g.n, "", "choice (navigable while a choice box is up)"))
+    # A popup window (ch 2: the game's message dialogs, branch popup-snap) is modal for everything,
+    # the toolbar included.
+    if any(g.ch == 2 for g in gs):
+        for g in gs:
+            if g.ch != 2:
+                errs.append(("-", g.n, "", "popup (navigable while a popup window is up)"))
     for src in gs:
         for d, (a, sign) in DIRS.items():
             to = moves.get((src.k, d))

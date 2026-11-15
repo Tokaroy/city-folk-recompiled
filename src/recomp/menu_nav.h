@@ -31,6 +31,10 @@ struct Item {
     bool choice = false;  // a row of a choice box (dialogue choices, the pockets' "Drop / Quit"):
                           // the pointer is put on the box's highlighted row when it appears
     bool cursor = false;  // ... the row the box's own cursor (csr_00) is on this frame
+    bool popup = false;   // a button of a popup window (the game's message dialogs, e.g. "You can't
+                          // hold any more Bells!" OK over the pockets): modal like a choice box
+                          // (only the popup's buttons are navigable, not even the toolbar), and the
+                          // pointer is put on its default button when it appears
     char name[17] = {};
 };
 

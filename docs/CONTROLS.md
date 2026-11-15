@@ -615,6 +615,68 @@ map_pockets_dpad.txt. Not reached by script: dresser / closet storage, a present
 letter, giving an item to a villager (the same rule applies), a real mouse and gamepad, PAL / Japan
 / Korea.
 
+**Popup windows over a menu** (branch popup-snap; user report "when a window opens ontop of a
+menu, such as a window saying "you cant place an item here" the pointer does not automatically
+snap to the "Ok" button and still tries to snap to the menu items underneath the window"). The
+menus' messages and yes / no questions are one dialog of the game, `Layout/cmn_btn.arc`
+(`cmn_dialog_B_00` / `_C_00`; the same file on all four discs): a message `T_dialg_00` and up to
+three buttons `B_dialgBtn_00..02` (an OK alone is `_02` in the middle; "No / Yes" are `_00 /
+_01`) in the window `N_dialg` (B, with the screen-wide backdrop `back00` that dims everything behind
+it) or `N_dialg_all` (C). Examples: "You can't hold any more cash!" (OK) over the pockets (an
+11th Bells bag with the wallet at 99,900), "Close without saving?" (No / Yes) over the letter
+keyboard and over the design editor, and the other "You can't ...!" / "There's no space ...!"
+lines of `SYS_2D_menu.bmg`. Cause: nothing marked the dialog as modal. It is drawn after the
+menu (its own root pane) and hit-tests only its button (fn_802B5598); the pockets' slots are
+drawn-only items, and the rule for those (left out where they lie under a tested item, "Screens
+drawn but not hit-tested" above) only removed the slots under the small OK button: the dialog's
+window and backdrop are no Bounding panes, so the snap never saw what they cover. The D-pad then
+walked the hidden pocket slots behind the dialog (before: BC_13, BC_14, BC_08, BC_03 with the
+dialog up), no press reached OK, and nothing placed the pointer when the dialog appeared.
+
+Now the dialog is treated like a choice box (cf_menu_nav.cpp `scanChoicePane` / `markChoices`,
+menu_nav.cpp `navigable()` / `apply()`, `Item::popup`):
+- Detection by the layout's own window pane while its panes are walked (drawn or hit-tested), so
+  every message of that dialog is covered, on every screen, independent of the text and the
+  language: `N_dialg`, `N_dialg_all` (cmn_dialog) and `N_anlgChcWin_all` (the "How many?" slider
+  popup, anlg_chc_win.arc, same structure: a slider `B_csr_00` and OK `B_btn_00`; not reached by
+  script). Every Bounding pane of such a layout is one of its buttons.
+- Modal: while a popup is up only its buttons are navigable, not the menu it opened over and not
+  the field toolbar either (the backdrop dims the toolbar too, and a move down from OK must not
+  land on a slot of it). With a popup and a choice box both up the one drawn last is in front.
+- Placement: on the popup's first frame the pointer goes onto its default button: the only one
+  (OK), else the first of its bottom row (the left one: "No" in "Close without saving?", the
+  safe answer; the slider popup's OK below its slider). It rides the dialog's fade-in (about 10
+  frames), A takes the button as soon as the dialog takes input; a hidden pointer is shown, and
+  the same rules as for choice boxes apply (snap mode only; a mouse being moved keeps it; Off and
+  real Wii Remotes unchanged).
+- Closing: the selection goes back to the item the popup was opened from, as for a choice box
+  over the pockets. When that item was clicked with the pointer (no snapped selection) it is the
+  menu item under the pointer when the popup appeared (the Bells bag), for choice boxes too (it
+  used to be the item nearest the row that vanished: an empty slot beside the bag). A popup over a
+  screen that closes with it falls under "A menu closed with the pointer snapped to it" (above).
+- A/B `CF_POPUP_SNAP=0` (popups neither modal nor placed: the old behaviour). Log lines
+  (`CF_NAV_LOG=1`): `popup up (N rows)`, `popup: pointer onto B_dialgBtn_02 (default button)`,
+  `choice box / popup closed, back to <item>`. Traces mark popup buttons `"ch":2`; check.py
+  reports any other item navigable next to one (`popup`).
+
+Verified (fixture `user-town-clean`, snap Auto, `CF_NAV_LOG` + `CF_NAV_TRACE`, shots):
+| Popup | Over | before | after |
+|---|---|---|---|
+| "You can't hold any more cash!" OK (USA, tools/routes/popup_bells.txt) | pockets | D-pad walked hidden slots, pointer left on a slot | pointer on OK on the dialog's first frame, LEFT / RIGHT / DOWN / UP stay, A closed it, back to the bag |
+| the same, PAL (English; save = the fixture with the PAL title folder) | pockets | | same as USA |
+| "Close without saving?" No / Yes (popup_letter.txt) | letter keyboard (gui manager items) | | on No, RIGHT = Yes, LEFT = No, UP / DOWN stay, B closed it (back to the Done button the route's pointer was on); opened again: on No again |
+| "Close without saving?" No / Yes (popup_design.txt) | design editor | | on No, RIGHT / LEFT between the two, B closed it, back to Quit |
+| "Do you want to order the tape deck?" No / Yes (popup_catalog.txt) | Nook's catalog | | on No, RIGHT = Yes, LEFT = No, DOWN / UP stay, B closed it, back to Confirm |
+Before = cfrecomp built from main 634aa9b. Not changed (same moves as on main / in the choice-snap runs): the pockets' "Drop /
+Carry / Quit" popup (choice_pockets.txt: placed on Drop, DOWN = Carry, B back on the rod slot,
+again), the recycle bin with the pockets (recycle_bin_dpad.txt: the same seven moves as the
+choice-snap run, shirt into the bin, Close). `py tools/nav/check.py` (also `--replay new`) over
+this branch's traces plus the choice-snap and snap-donate traces (88 distinct sets): 0 errors.
+The pockets popup needs ten bags because the wallet stops at 99,900 (the tenth bag leaves a
+100-Bells bag; adding that one gives the message): `CF_GIVE_ITEM` with ten `91DC`. Not reached
+by script: the "How many?" slider popup, Japan / Korea (same layout file, pane names only), a
+real mouse and gamepad.
+
 Scripted routes: a scripted pointer that rests somewhere when a box appears is moved onto the
 highlighted row like any other pointer, so A takes the first choice, as it did before with a
 pointer that had not moved while the box was up (docs/TEST_COVERAGE.md "Route lessons": the game
@@ -736,13 +798,14 @@ Test aids: script tokens `UP DOWN LEFT RIGHT STICK*` drive it like a pad, `RECEN
 "Recenter pointer"; a scripted `@x/y` counts as a free pointer move. `CF_NAV_LOG=1` (each item set
 as it becomes navigable, every selection change, toolbar enter/leave), `CF_NAV_DUMP=1` (every hit-test
 source with its scale and items, every 30 frames), `CF_NAV_TRACE=<file>` (above), `CF_NAV_OLD=1`,
-`CF_NAV_MODAL=whole` (round 1's modal rules). `CF_MOUSE_MOVE="<guest frame>:<x>/<y>[*<n>],..."`
+`CF_NAV_MODAL=whole` (round 1's modal rules), `CF_POPUP_SNAP=0` (popup windows neither modal nor placed). `CF_MOUSE_MOVE="<guest frame>:<x>/<y>[*<n>],..."`
 (wiimote.cpp): a mouse motion event to (x, y) = fractions of the window through SDL's event queue,
 `*n` = n events on consecutive host frames 1 pixel apart (a mouse being moved); it also ends a
 scripted pointer position, as a real mouse does. Stick noise / a right-stick move for the snap:
 `CF_VIRTUAL_PAD` with `rightx=` steps (the pad must be attached; run.ps1 hides real controllers).
-Traces carry `"ch"` (choice rows) since round 2; check.py reports a non-choice menu item navigable
-next to a choice box (`choice`).
+Traces carry `"ch"` (1 = choice rows, since round 2; 2 = popup buttons, since popup-snap); check.py
+reports a non-choice menu item navigable next to a choice box (`choice`) and any other item next
+to a popup (`popup`).
 
 ## Pointer in ultrawide
 

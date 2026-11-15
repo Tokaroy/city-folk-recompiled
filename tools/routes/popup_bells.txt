@@ -1,0 +1,78 @@
+# Pockets popup (docs/CONTROLS.md "Popup windows over a menu"): ten 10,000-Bells bags
+# (CF_GIVE_ITEM=5600:91DC x10, slots BC_03..BC_12), each opened by pointer click -> "Drop / Add to
+# Wallet / Quit" (pointer placed on Drop) -> DOWN -> A. The wallet stops at 99,900 (the tenth bag
+# leaves a 100-Bells bag); adding that one opens the game's message dialog "You can't hold any
+# more Bells!" with OK over the pockets (cmn_dialog_B, about frame 10650). Then
+# D-pad LEFT / RIGHT / DOWN / UP on the dialog, A (OK), the selection back on the bag, B B.
+# Env CF_FIXTURE=user-town-clean;CF_FF=1-4400;CF_GIVE_ITEM=5600:91DC,... (10x);CF_NAV_LOG=1
+include continue_any.txt
+5240:A
++60:A ~6
+after link d_bgo_drawNP 2
++1400:MINUS
+after link d_menu_itemNP 1
++300:@0.560/-0.237
++10:@0.570/-0.227
++30:A
++120:DOWN
++40:A
++150:@-0.447/0.079
++10:@-0.437/0.089
++30:A
++120:DOWN
++40:A
++150:@-0.223/0.079
++10:@-0.213/0.089
++30:A
++120:DOWN
++40:A
++150:@0.000/0.079
++10:@0.010/0.089
++30:A
++120:DOWN
++40:A
++150:@0.223/0.079
++10:@0.233/0.089
++30:A
++120:DOWN
++40:A
++150:@0.447/0.079
++10:@0.457/0.089
++30:A
++120:DOWN
++40:A
++150:@-0.560/0.395
++10:@-0.550/0.405
++30:A
++120:DOWN
++40:A
++150:@-0.336/0.395
++10:@-0.326/0.405
++30:A
++120:DOWN
++40:A
++150:@-0.112/0.395
++10:@-0.102/0.405
++30:A
++120:DOWN
++40:A
++150:@0.112/0.395
++10:@0.122/0.405
++30:A
++120:DOWN
++40:A
++150:@0.112/0.395
++10:@0.122/0.405
++30:A
++120:DOWN
++40:A
++250:LEFT
++60:RIGHT
++60:RIGHT
++60:DOWN
++60:UP
++60:UP
++80:A
++150:RIGHT
++100:B
++150:B
