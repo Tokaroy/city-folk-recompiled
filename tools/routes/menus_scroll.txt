@@ -1,0 +1,18 @@
+# Menu windows at high frame rates (branch menu-scroll; docs/WII.md "Menu backgrounds at high frame
+# rates"): pockets (-), then the town map (+), each left open for 10 s, then closed. The menu
+# windows' patterned backgrounds scroll. Env CF_FIXTURE=user-town-clean;CF_FF=1-4400 and
+# -Settings "[video]|target_fps=120".
+include continue_any.txt
+5240:A
++60:A ~6
+after link d_bgo_drawNP 2
++1400:MINUS
++600:B
++200:PLUS
++600:B
++200:MINUS
++300:@0.6/-0.65
++10:@0.61/-0.64
++30:A
++600:B
++200:B

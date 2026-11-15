@@ -746,6 +746,60 @@ catch close-up camera moves. Part of the user's "big jumps when catching a bug o
 - Not done: a particle's first interval (above), PAL/JP/KR, the river and pond fish, a real 120 Hz
   display.
 
+### Menu backgrounds at high frame rates (branch menu-scroll)
+
+User report: "an issue with high framerates in menus where the game jumps frequently", suspecting the
+scrolling background of the menu windows. It was that background.
+
+- **Cause**: every menu window seen (pockets, the letters and designs panels over them, the town
+  map, Nook's "What do you want to sell?" window, the catalog) has a patterned background (bags,
+  houses, leaves) scrolled by one lyt material animation: a TexSRT texture matrix (2x4, loaded by
+  `nw4r::lyt::Material::SetupGX` at 802A60EC) with scale **8 x 4** (the pattern repeats 8 times
+  across), offset +0.0036 per game frame, wrapping by exactly one texture every **280 game frames
+  (4.7 s)** (`-2.504 -> -3.500`). Wrapped offsets are invisible on the console (the texture
+  repeats), but the in-betweens blended them entrywise: the pattern swept back through one whole
+  tile within the interval, so for one interval (2 presents at 120, 4 at 240) the background stood
+  half a tile away and then snapped back. In a menu left open that is every 4.7 s. The texture
+  scroll rules (`texWrapPairs`, `blendTexWrap`, from LM's boss skies) only looked at 3D texture
+  matrices (role 0); 2D ones (role 2, orthographic) went to the generic blend, whose wrap bound in
+  `blendable` only covers matrices with every entry within +-4, and this one has 8.
+- **Fix** (interp.cpp `texWrapPairs`): 2D texture matrices are judged like the 3D ones (steady
+  scale/rotation part, each row's offset step against the step of the game frame before), and a
+  **wrap of a steady scroll with a known step** (the step plus a whole number of textures) blends by
+  the step less those textures (mode 1), the short way. Everything else in 2D keeps the old blend
+  (blendSpin / entrywise): no 2D texture is ever snapped as "placed anew", and a jump without a
+  consistent history (a clamped picture placed by its matrix, e.g. the circle wipe) is not taken
+  the short way; its step is then unknown, so the next ordinary step is not taken for a wrap. Only
+  the wrap intervals change. A/B `CF_2D_TEXWRAP=0`; `CF_TEXWRAP_LOG=<file>` now logs role-2 pairs
+  (`role 2 ... mode 1` = blended the short way) and a `2D tex:` summary line every 600 tapes
+  (noted / unpaired / other size / changing scale / jumped).
+- **Measured on real presents** (`CF_PRESENT_DUMP=1` + `CF_FRAME_DUMP`, VSync off, 1280x720,
+  `tools/routes/menus_scroll.txt`: pockets, then the map, each open 10 s; catalog:
+  `gameplay_catalog.txt` with `[wiimote] remote1_snap=off`). New tool
+  `py tools/interp/present_jumps.py <dump dir>`: a step between consecutive presents over 5x the
+  median step around it (+-8 presents) is a spike; a jump is two (away and back). Spikes at the
+  wrap frames (CF_TEXWRAP_LOG), before (`CF_2D_TEXWRAP=0`) / after, same build:
+  - pockets + map at 120 fps: 5 (2 wraps) / **0** (2 wraps, both `mode 1`); 2099 / 2133 steps;
+  - the same at a 240 target (this PC presented ~112 fps off screen): 5 / **0**;
+  - catalog at 120: 12 at the 6 wraps / **0**; the other 10-11 spikes in both runs are the route's
+    pointer jumps (scripted `@x/y` moves) and the item preview appearing, single steps at the game
+    frame;
+  - first run at the display's 57 fps: 2 visible (map: step 2.05 vs median 0.16 around it).
+  Before/after strips of the wrap presents: the map's house pattern shifts half a tile in the two
+  presents of tape f7750 before, moves on evenly after.
+- `CF_INTERP_TEST=2` dumps did **not** show the jump (the in-between at the wrap matched the
+  average of its game frames), while the real presents did; not investigated (the test mode is not
+  a substitute for present dumps for 2D). `tools/interp/inbetween_jumps.py` checks such dumps
+  (in-between farther from both game frames than they are from each other).
+- Logged scrolls in other menus (`tw_letters`: letters and designs panels; Nook's sell window open
+  100 s: 32 wraps): all the same material animation, all `mode 1` now.
+- Original 60: `texWrapPairs` only runs when tapes are paired (interpolating): at 60 the
+  `CF_TEXWRAP_LOG` file is never even opened. (Frame dumps of two Original 60 runs of the route
+  differ anyway, `CF_2D_TEXWRAP=0` or not: the menus open a few game frames apart run to run.) 3D
+  texture matrices (town water, sky; the role-0 rules) take exactly the old code path.
+- Not done: PAL/JP/KR (same lyt code, hook-free change), the design editor itself (only the designs
+  panel), a real 240 Hz display.
+
 ## IOS (Starlet)
 
 The game reaches every device through IPC to IOS (`IOS_Open/Ioctl(v)/Read/Write`). Decision
