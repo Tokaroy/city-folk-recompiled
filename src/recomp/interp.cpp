@@ -852,6 +852,10 @@ bool cameraJump(const M34& va, const M34& vb, float* moved = nullptr, float* tur
 // entrywise and swept through whole textures within one game frame. Projection-style matrices
 // (flashlight, shadows) change their rotation part as the camera turns and are left alone.
 // CF_TEXWRAP_LOG=<file>: every scroll pair with a step over half a texture, and the decision.
+const bool s2DTexWrap = [] {
+    const char* v = std::getenv("CF_2D_TEXWRAP");
+    return !(v && *v == '0');
+}();
 void texWrapPairs(const Tape& a, Tape& b) {
     static FILE* sLog = [] {
         const char* p = std::getenv("CF_TEXWRAP_LOG");
@@ -862,12 +866,23 @@ void texWrapPairs(const Tape& a, Tape& b) {
     b.texShift.assign(b.patches.size(), {0, 0, 0});
     b.texMode.assign(b.patches.size(), 0);
     const bool aSteps = a.texStep.size() == a.patches.size();
+    static u64 s2DStat[5] = {};  // CF_TEXWRAP_LOG: 2D texture matrices noted / unpaired / other size / changing scale / jumped
+    if (sLog && b.seq % 600 == 0)
+        std::fprintf(sLog, "2D tex: %llu noted, %llu unpaired, %llu other size, %llu changing, %llu jumped\n",
+                     (unsigned long long)s2DStat[0], (unsigned long long)s2DStat[1], (unsigned long long)s2DStat[2],
+                     (unsigned long long)s2DStat[3], (unsigned long long)s2DStat[4]);
     for (u32 i = 0; i < b.patches.size(); i++) {
         const Patch& p = b.patches[i];
         const s32 j = b.partner[i];
         // (Texture matrix ids start at GX_TEXMTX0 = 30; below are position matrices noted as TexMtx
         // for element-wise blending, sLinearPos.)
-        if (j < 0 || p.kind != Kind::TexMtx || p.role != 0 || (p.count != 8 && p.count != 12) || p.slot < 30) continue;
+        if (sLog && p.kind == Kind::TexMtx && p.role == 2) {
+            s2DStat[0]++;
+            if (j < 0) s2DStat[1]++;
+            else if (p.count != 8 && p.count != 12) s2DStat[2]++;
+        }
+        if (j < 0 || p.kind != Kind::TexMtx || (p.role != 0 && p.role != 2) || (p.count != 8 && p.count != 12) || p.slot < 30) continue;
+        if (p.role == 2 && !s2DTexWrap && !sLog) continue;
         const Patch& q = a.patches[j];
         bool steady = true, jumped = false;
         float big = 0, d[3] = {};
@@ -885,7 +900,11 @@ void texWrapPairs(const Tape& a, Tape& b) {
                 steady = false;
             }
         }
-        if (!steady) continue;
+        if (!steady) {
+            if (sLog && p.role == 2) s2DStat[3]++;
+            continue;
+        }
+        if (sLog && p.role == 2 && jumped) s2DStat[4]++;
         const int rows = p.count / 4;
         float prev[3] = {kNan, kNan, kNan}, shift[3] = {0, 0, 0};
         bool known = aSteps, placed = false;
@@ -904,15 +923,26 @@ void texWrapPairs(const Tape& a, Tape& b) {
         } else if (jumped && big > 4.0f && !p.sky) {
             b.texMode[i] = 2;  // no history: a jump through several textures is not blended
         }
+        // 2D (lyt TexSRT, role 2; docs/WII.md "Menu backgrounds at high frame rates"): only a wrap of
+        // a steady scroll with a known step (mode 1 with a shift) changes anything; every other pair
+        // keeps the old blend (blendSpin / entrywise), and a texture placed anew or a jump without
+        // history (a clamped picture placed by its matrix, such as a wipe, must not be taken the short
+        // way) leaves its step unknown (NaN), so the next game frame's ordinary step is not taken for
+        // a wrap. CF_2D_TEXWRAP=0: never (the old entrywise blend through the whole texture).
+        const bool wrapped2D = shift[0] != 0.0f || shift[1] != 0.0f || shift[2] != 0.0f;
+        const bool scroll2D = p.role == 2 && b.texMode[i] == 1;  // the step goes on from the last one
+        const bool kept2D = p.role == 2 && (!scroll2D || !wrapped2D || !s2DTexWrap);
+        if (kept2D) b.texMode[i] = 0;
         for (int r = 0; r < rows; r++) {
-            b.texShift[i][r] = shift[r];
-            if (b.texMode[i] == 1) b.texStep[i][r] = d[r] - shift[r];
+            b.texShift[i][r] = kept2D ? 0.0f : shift[r];
+            if (kept2D) b.texStep[i][r] = scroll2D ? d[r] - shift[r] : jumped ? kNan : d[r];
+            else if (b.texMode[i] == 1) b.texStep[i][r] = d[r] - shift[r];
             else if (b.texMode[i] == 0) b.texStep[i][r] = jumped && (big <= 4.0f || p.sky) ? d[r] - std::round(d[r]) : d[r];
         }
         if (sLog && jumped)
-            std::fprintf(sLog, "%llu f%u site %08X key %016llX cat %u n %u sky %d big %.2f d %.3f %.3f %.3f prev %.4f %.4f %.4f shift %.0f %.0f %.0f mode %d\n",
+            std::fprintf(sLog, "%llu f%u site %08X key %016llX cat %u n %u sky %d role %u big %.2f d %.3f %.3f %.3f prev %.4f %.4f %.4f shift %.0f %.0f %.0f mode %d\n",
                          (unsigned long long)b.seq, b.gameFrame, p.site, (unsigned long long)p.key, u32(p.cat), u32(p.count),
-                         int(p.sky), big, d[0], d[1], rows > 2 ? d[2] : 0.0f, prev[0], prev[1], prev[2], shift[0], shift[1],
+                         int(p.sky), u32(p.role), big, d[0], d[1], rows > 2 ? d[2] : 0.0f, prev[0], prev[1], prev[2], shift[0], shift[1],
                          shift[2], int(b.texMode[i]));
         if (sLog && jumped && std::getenv("CF_TEXWRAP_VALUES")) {
             std::fprintf(sLog, "  a #%d:", j);
