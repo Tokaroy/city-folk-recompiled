@@ -1,0 +1,206 @@
+diff --git a/include/aurora/world_fx.h b/include/aurora/world_fx.h
+index e2b2c55..fff9416 100644
+--- a/include/aurora/world_fx.h
++++ b/include/aurora/world_fx.h
+@@ -43,6 +43,12 @@ extern "C" {
+ // its own object): drawn again like a character, but mirrored through that character's water plane
+ // (found from the character's own anchor), so the whole figure is mirrored or none of it.
+ #define AURORA_SURFACE_CHARACTER_PART 5
++// 0590: a thing attached to or carried by a character, drawn as its own object (a hat, glasses, a
++// held tool with its line, a caught fish held up): mirrored through the plane of the nearest whole
++// character (anchors within 64 units) like a part, and left alone (no planar copy: the
++// screen-space march as for the world) when no character is near it, e.g. the same model flying
++// or lying about on its own.
++#define AURORA_SURFACE_CHARACTER_ATTACH 6
+ // 0580: OR'ed onto a kind (WORLD / GROUND): a big static model by the water (a bridge) drawn again
+ // mirrored like a character, keeping its own kind; one run of flagged draws = one group (one plane).
+ // Screen-space reflection only has the camera's view of it (the deck top and near side): the mirrored
+diff --git a/lib/gfx/world_fx.cpp b/lib/gfx/world_fx.cpp
+index f91bc8d..7b2435f 100644
+--- a/lib/gfx/world_fx.cpp
++++ b/lib/gfx/world_fx.cpp
+@@ -92,11 +92,16 @@ struct CharGroup {
+   float proj[16]{};
+   bool anchored = false;
+   bool part = false; // 0580: AURORA_SURFACE_CHARACTER_PART (uses the nearest character's plane)
++  bool attach = false; // 0590: AURORA_SURFACE_CHARACTER_ATTACH (a part that is never mirrored alone)
+   bool mirror = false;   // 0580: AURORA_SURFACE_MIRROR (a static model; parts never attach to it)
+   bool hasLocal = false; // 0580: anchor given in view space (a mirrored static model: its first draw's vertices)
+   float local[3]{};
+ };
+-constexpr size_t MaxCharGroups = 16;
++constexpr size_t MaxCharGroups = 16; // planes (water lookups)
++// 0590: groups noted per frame (characters, parts and attachments: a player alone is up to six:
++// body, head, Mii opaque / translucent halves, hat, held tool), more than planes: only whole
++// characters and bridges take one
++constexpr size_t MaxCharEntries = 64;
+ constexpr size_t MaxMirrorDraws = 1024;
+ std::vector<CharGroup> g_chars;
+ struct MirrorDraw {
+@@ -1185,7 +1190,7 @@ struct SceneJob {
+   // 0580: AURORA_WORLD_FX_PLANAR_LOG (the plane pass's result read back and logged)
+   PlaneUniform planeCpu{};
+   uint32_t planeGroups = 0, charGroups = 0;
+-  std::array<int, MaxCharGroups> partOf{}, planeUsed{};
++  std::array<int, MaxCharEntries> partOf{}, planeUsed{}, drawsOf{}, cmdsOf{}; // (0590: mirrored draws / recorded commands per group)
+   float up[3]{};
+   uint32_t frameNo = 0;
+   RenderTargetLayout layout{};
+@@ -1219,7 +1224,7 @@ struct Slot {
+   std::atomic<int> state{0}; // 0 free, 1 copied, 2 map requested, 3 mapped, 4 map failed
+   uint32_t age = 0, frame = 0, groups = 0, chars = 0;
+   PlaneUniform pu{};
+-  std::array<int, MaxCharGroups> partOf{}, planeUsed{};
++  std::array<int, MaxCharEntries> partOf{}, planeUsed{}, drawsOf{}, cmdsOf{}; // (0590: mirrored draws / recorded commands per group)
+   float up[3]{};
+ };
+ std::array<Slot, Slots> g_slots;
+@@ -1234,9 +1239,9 @@ bool on() noexcept {
+ void report(Slot& s) noexcept {
+   const auto* rows = static_cast<const float*>(s.buf.GetConstMappedRange(0, MaxCharGroups * 64));
+   std::string line = fmt::format("[planar] frame {} groups {}:", s.frame, s.chars);
+-  for (uint32_t gi = 0; gi < s.chars && gi < MaxCharGroups; ++gi) {
++  for (uint32_t gi = 0; gi < s.chars && gi < MaxCharEntries; ++gi) {
+     const int pl = s.planeUsed[gi];
+-    line += fmt::format(" | g{}{}", gi, s.partOf[gi] >= 0 ? fmt::format(" part of g{}", s.partOf[gi]) : s.partOf[gi] == -2 ? std::string(" part (alone)") : std::string{});
++    line += fmt::format(" | g{} d{}/{}{}", gi, s.drawsOf[gi], s.cmdsOf[gi], s.partOf[gi] >= 0 ? fmt::format(" part of g{}", s.partOf[gi]) : s.partOf[gi] == -2 ? std::string(" part (alone)") : s.partOf[gi] == -3 ? std::string(" attachment (alone)") : std::string{});
+     if (pl < 0 || rows == nullptr) {
+       line += " not drawn";
+       continue;
+@@ -1289,7 +1294,7 @@ void copy(const wgpu::CommandEncoder& cmd, const SceneJob& job, const wgpu::Buff
+     }
+     cmd.CopyBufferToBuffer(planes, 0, s.buf, 0, MaxCharGroups * 64);
+     s.age = g_frame, s.frame = job.frameNo, s.groups = job.planeGroups, s.chars = job.charGroups;
+-    s.pu = job.planeCpu, s.partOf = job.partOf, s.planeUsed = job.planeUsed;
++    s.pu = job.planeCpu, s.partOf = job.partOf, s.planeUsed = job.planeUsed, s.drawsOf = job.drawsOf, s.cmdsOf = job.cmdsOf;
+     std::memcpy(s.up, job.up, sizeof(s.up));
+     s.state = 1;
+     return;
+@@ -1578,7 +1583,8 @@ void note_draw(const gx::PipelineConfig& config, uint8_t kind, const gx::DrawDat
+   }
+   const bool mirrorFlag = (kind & AURORA_SURFACE_MIRROR) != 0;
+   kind &= uint8_t(~AURORA_SURFACE_MIRROR);
+-  if (kind == AURORA_SURFACE_CHARACTER || kind == AURORA_SURFACE_CHARACTER_PART || mirrorFlag) { // 0570: the character's anchor and projection
++  if (kind == AURORA_SURFACE_CHARACTER || kind == AURORA_SURFACE_CHARACTER_PART || kind == AURORA_SURFACE_CHARACTER_ATTACH ||
++      mirrorFlag) { // 0570: the character's anchor and projection (0590: attachments too)
+     if (!g_chars.empty() && !g_chars.back().anchored && g_chars.back().end == UINT32_MAX) {
+       // the draw's current position matrix, else (skinned shapes index theirs per vertex) the first
+       // loaded one that places something in front of the camera
+@@ -1683,15 +1689,15 @@ void group_local_anchor(float x, float y, float z) noexcept {
+   }
+ }
+ 
+-void character_scope(bool begin, bool part, bool mirror) noexcept {
++void character_scope(bool begin, bool part, bool mirror, bool attach) noexcept {
+   sync();
+   if (!g_cfg.enabled || !g_cfg.reflections || !planar_on()) {
+     return;
+   }
+   const auto [pass, command] = next_command_position();
+   if (begin) {
+-    if (g_chars.size() < MaxCharGroups) {
+-      g_chars.push_back({.pass = pass, .begin = command, .part = part, .mirror = mirror});
++    if (g_chars.size() < MaxCharEntries) {
++      g_chars.push_back({.pass = pass, .begin = command, .part = part, .attach = attach, .mirror = mirror});
+     }
+   } else if (!g_chars.empty() && g_chars.back().end == UINT32_MAX) {
+     if (pass == g_chars.back().pass) {
+@@ -1828,7 +1834,7 @@ void scene_end() noexcept {
+     PlaneUniform pu{};
+     uint32_t groups = 0;
+     const auto [curPass, curCommand] = next_command_position();
+-    std::array<int, MaxCharGroups> planeOf{}; // g_chars index -> plane (-1: none)
++    std::array<int, MaxCharEntries> planeOf{}; // g_chars index -> plane (-1: none)
+     planeOf.fill(-1);
+     static const bool sOwnPlanes = [] { // A/B: AURORA_WORLD_FX_PART_PLANES=own (a plane per part, as 0570)
+       const char* v = std::getenv("AURORA_WORLD_FX_PART_PLANES");
+@@ -1838,7 +1844,7 @@ void scene_end() noexcept {
+     // character (anchors within 64 units; a head may be drawn after other objects, the Mii head in
+     // the translucent pass) and uses its plane: the water under the character, not under the
+     // part's own point, so the figure is mirrored as a whole or not at all. Characters first.
+-    std::array<int, MaxCharGroups> parentOf{};
++    std::array<int, MaxCharEntries> parentOf{};
+     parentOf.fill(-1);
+     for (size_t gi = 0; gi < g_chars.size(); ++gi) {
+       const auto& g = g_chars[gi];
+@@ -1858,7 +1864,7 @@ void scene_end() noexcept {
+         }
+       }
+     }
+-    std::array<size_t, MaxCharGroups> order{};
++    std::array<size_t, MaxCharEntries> order{};
+     size_t orderN = 0;
+     for (int partPass = 0; partPass < 2; ++partPass) {
+       for (size_t gi = 0; gi < g_chars.size(); ++gi) {
+@@ -1872,12 +1878,17 @@ void scene_end() noexcept {
+       const auto& g = g_chars[gi];
+       // (a part whose character drew nothing mirrored gets its own plane)
+       const int shared = parentOf[gi] >= 0 ? planeOf[size_t(parentOf[gi])] : -1;
++      // 0590: an attachment only with its character's plane (alone it stays with the march)
++      if (g.attach && !sOwnPlanes && shared < 0) {
++        continue;
++      }
+       if ((!g.anchored && shared < 0) || (shared < 0 && groups >= MaxCharGroups)) {
+         continue;
+       }
+       const uint32_t plane = shared >= 0 ? uint32_t(shared) : groups;
+       const uint32_t end = g.end != UINT32_MAX ? g.end : (g.pass == curPass ? curCommand : g.begin);
+       bool any = false;
++      job.cmdsOf[gi] = int(end - g.begin);
+       for (uint32_t i = g.begin; i < end && job.mirror.size() < MaxMirrorDraws; ++i) {
+         const auto* d = gx_draw_at(g.pass, i);
+         // (triangles: the projection sits at byte 32 of the GX uniform block; lines / points and
+@@ -1892,6 +1903,7 @@ void scene_end() noexcept {
+         MirrorDraw m{.data = *d, .original = d->uniformRange, .group = plane};
+         m.data.uniformRange = push_uniform(src, d->uniformRange.size);
+         job.mirror.push_back(m);
++        ++job.drawsOf[gi];
+         any = true;
+       }
+       if (!any || shared >= 0) {
+@@ -1909,7 +1921,7 @@ void scene_end() noexcept {
+       job.planeCpu = pu;
+       job.planeGroups = groups;
+       for (size_t gi = 0; gi < g_chars.size(); ++gi) {
+-        job.partOf[gi] = parentOf[gi] >= 0 ? parentOf[gi] : (g_chars[gi].part ? -2 : -1);
++        job.partOf[gi] = parentOf[gi] >= 0 ? parentOf[gi] : (g_chars[gi].attach && !sOwnPlanes ? -3 : g_chars[gi].part ? -2 : -1);
+         job.planeUsed[gi] = planeOf[gi] >= 0 ? planeOf[gi] : (parentOf[gi] >= 0 ? planeOf[size_t(parentOf[gi])] : -1);
+       }
+       job.charGroups = uint32_t(g_chars.size());
+diff --git a/lib/gfx/world_fx.hpp b/lib/gfx/world_fx.hpp
+index 6758e81..73e9f76 100644
+--- a/lib/gfx/world_fx.hpp
++++ b/lib/gfx/world_fx.hpp
+@@ -24,7 +24,7 @@ void note_draw(const gx::PipelineConfig& config, uint8_t kind, const gx::DrawDat
+ // GX_AURORA_WORLD_FX_END.
+ void scene_end() noexcept;
+ // 0570: GX_AURORA_SET_SURFACE into (begin) or out of AURORA_SURFACE_CHARACTER.
+-void character_scope(bool begin, bool part = false, bool mirror = false) noexcept;
++void character_scope(bool begin, bool part = false, bool mirror = false, bool attach = false) noexcept;
+ // 0580: the open group's anchor in view space (a mirrored static model: its first draw's vertices)
+ void group_local_anchor(float x, float y, float z) noexcept;
+ // 0580: the open group is a mirrored static model still without an anchor
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index 2f5bab6..82cab5e 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -1885,7 +1885,8 @@ void handle_aurora(ByteReader& reader) noexcept {
+     const u8 kind = reader.read<u8>();
+     const u8 was = g_gxState.surfaceKind;
+     const auto isChar = [](u8 k) {
+-      return k == AURORA_SURFACE_CHARACTER || k == AURORA_SURFACE_CHARACTER_PART || (k & AURORA_SURFACE_MIRROR) != 0;
++      return k == AURORA_SURFACE_CHARACTER || k == AURORA_SURFACE_CHARACTER_PART || k == AURORA_SURFACE_CHARACTER_ATTACH ||
++             (k & AURORA_SURFACE_MIRROR) != 0; // (0590: ATTACH)
+     };
+     // (0580: a mirrored static model keeps its own kind under the flag: WORLD -> GROUND inside it is
+     // no new group)
+@@ -1897,7 +1898,8 @@ void handle_aurora(ByteReader& reader) noexcept {
+         gfx::world_fx::character_scope(false);
+       }
+       if (isChar(kind)) {
+-        gfx::world_fx::character_scope(true, kind == AURORA_SURFACE_CHARACTER_PART, (kind & AURORA_SURFACE_MIRROR) != 0);
++        gfx::world_fx::character_scope(true, kind == AURORA_SURFACE_CHARACTER_PART || kind == AURORA_SURFACE_CHARACTER_ATTACH,
++                                       (kind & AURORA_SURFACE_MIRROR) != 0, kind == AURORA_SURFACE_CHARACTER_ATTACH);
+       }
+     }
+     g_gxState.surfaceKind = kind;
