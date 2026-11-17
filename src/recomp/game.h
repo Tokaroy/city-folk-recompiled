@@ -9,10 +9,16 @@
 #include "recomp/ctx.h"
 
 struct PADStatus;
+namespace recomp::wiimote {
+struct State;
+}
 
 namespace recomp::game {
 
 // --- frame loop (guest thread) ---
+// Host thread, while the start-up shader preparation holds the game (main.cpp): true lets the guest
+// run meanwhile, for a game feature whose frames are not shown anyway (City Folk's Quick Start).
+bool runDuringShaderHold();
 // Once per presented guest frame, before it is handed to the host. True: the frame is not
 // shown and the guest continues straight into the next one (fast-forward).
 bool onGuestFrame(Ctx& c);
@@ -23,10 +29,16 @@ u32 guestFrames();
 void filterPad(PADStatus* pads, int count);
 // True while the game must not see the player's input (an event holds the player).
 bool padHeld();
+// Wii Remote state as the game reads it (wiimote::sample, after the port's source): a game feature
+// may replace it (City Folk's Quick Start drives the start-up with its own presses).
+void filterRemote(int chan, wiimote::State& st);
 
 // --- timing (any thread) ---
 // VI retrace / alarm speed multiplier (1 = console speed; > 1 while fast-forwarding).
 double retraceSpeed();
+// Multiplier of the modelled IOS (NAND) and disc latencies (1 = as modelled; below 1 while a
+// start-up runs unseen, City Folk's Quick Start).
+double ioLatencyScale();
 // Audio gain multiplier 0..1 (muted while fast-forwarding).
 float audioGain();
 // Audio channels swapped by the game state (LM: the mirrored Hidden Mansion).

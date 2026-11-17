@@ -15,6 +15,7 @@
 #include <dolphin/vi.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -75,6 +76,23 @@ void startTimer() {
             if (const double speed = game::retraceSpeed(); speed > 1.0) {
                 // Fast-forward (skip.h): retraces as fast as the game takes them, up to `speed` x.
                 const auto fast = std::chrono::duration_cast<clock::duration>(period / speed);
+                if (speed >= 1000.0) {
+                    // Unpaced (City Folk's Quick Start): the next retrace as soon as every guest
+                    // thread waits (a worker below the game thread runs to its next wait first, as
+                    // it would during the console's frame: City Folk's session-start work runs on
+                    // such a thread), at the latest one frame after the previous one, so never
+                    // slower than the console. CF_FF_IDLE_WAIT=<fraction of a frame> (test aid).
+                    static const double sLatest = [] {
+                        const char* v = std::getenv("CF_FF_IDLE_WAIT");  // fraction of a frame (test aid)
+                        return v ? std::atof(v) : 1.0;
+                    }();
+                    const auto latest = next + std::chrono::duration_cast<clock::duration>(period * sLatest);
+                    while (sTimerRun && clock::now() < latest && (sRetracePending.load() || !sched::cpuIdle()))
+                        std::this_thread::yield();
+                    next = clock::now();
+                    if (!frame::gamePaused() && !sRetracePending.exchange(true)) sched::postIrq(&retrace);
+                    continue;
+                }
                 while (clock::now() < next && sTimerRun) std::this_thread::yield();
                 next = std::max(next + fast, clock::now());
                 if (!frame::gamePaused() && !sRetracePending.exchange(true)) sched::postIrq(&retrace);

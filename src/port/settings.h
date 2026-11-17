@@ -98,6 +98,16 @@ struct EnhancementSettings {
     bool pauseOnFocusLoss = true;
 };
 
+// Quick Start (F1 > Enhancements > General; src/game/cf_quick_start.cpp, docs/FEATURES.md "Quick Start"):
+// at the next launch the game runs its own start (strap screen, title, Rover, "Preparing saved
+// data") unseen and at full speed and appears as the chosen resident steps out of the house.
+// resident<Version>: "" = the first resident Rover lists, else "<town id>-<player id>" (hex, as
+// [skin_tone]); one per version, since each has its own save.
+struct QuickStartSettings {
+    bool enabled = false;
+    std::string residentUsa, residentEurope, residentJapan, residentKorea;
+};
+
 // Gameplay options (F1 > Enhancements > Gameplay; docs/FEATURES.md). Defaults are the original game.
 struct GameplaySettings {
     // Grass wear 0 Original, 1 New Leaf style, 2 Off (src/game/cf_grass.cpp).
@@ -365,6 +375,7 @@ struct Settings {
     CrtSettings crt;
     AudioSettings audio;
     EnhancementSettings enhancements;
+    QuickStartSettings quickStart;
     GameplaySettings gameplay;
     UpdateSettings updates;
     NintendoEventSettings events;

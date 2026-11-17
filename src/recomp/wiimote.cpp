@@ -818,6 +818,7 @@ void sample(int chan, State& out) {
         }
         if (f >= sAutoAFrom[chan] && f < sAutoAUntil[chan]) out.buttons |= kBtnA;
     }
+    game::filterRemote(chan, out);  // City Folk's Quick Start (src/game/cf_quick_start.cpp)
     menunav::notePointer(chan, out.connected && out.pointerValid, out.px, out.py);
     {
         std::lock_guard lk(sStateMutex);

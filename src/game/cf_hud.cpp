@@ -16,6 +16,7 @@
 //
 // Test aid CF_LYT_LOG=<first>,<last>: every visible pane drawn in those guest frames (depth,
 // name, position, the caller of the layout's root draw).
+#include "game/cf_quick_start.h"
 #include "game/cf_features.h"
 #include "port/settings.h"
 #include "recomp/game.h"
@@ -164,6 +165,7 @@ HLE(fn_802B6B48) {
         const char* v = std::getenv("CF_WIPE_TAG");
         return !(v && *v == '0');
     }();
+    quickstart::noteWipeDraw(c.r[3]);  // cf_quick_start.cpp: the town's circle opening ends Quick Start
     ws::WipeScope wipe;
     if (!sTag) return callOriginal(c, "fn_802B6B48");
     interp::TagScope t(interp::TagCat::Hud, c.r[3], rd32(c.r[3]), 0x57495045);

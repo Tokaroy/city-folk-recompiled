@@ -64,6 +64,9 @@ void postIrq(std::function<void(Ctx&)> fn);
 // Raises the interrupt after `seconds` of host time (models hardware latency).
 void postIrqAfter(double seconds, std::function<void(Ctx&)> fn);
 bool inIrq();
+// No guest thread holds the CPU (every one is blocked or waits for the host): unpaced
+// fast-forward (hle_vi.cpp) posts the next retrace then, so loader threads are not starved.
+bool cpuIdle();
 // The current guest thread runs with interrupts on (MSR[EE]), i.e. not in a critical section.
 bool interruptsEnabled();
 

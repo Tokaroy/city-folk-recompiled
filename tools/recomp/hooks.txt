@@ -265,3 +265,10 @@ fn_80197E1C all
 # The game's texture capture (src/game/cf_game.cpp): its buffer is marked as CPU-read before the
 # EFB copy, so photos (1 button) are read back into guest memory (they were black).
 fn_802B7A7C all
+
+# Quick Start (src/game/cf_quick_start.cpp, docs/FEATURES.md "Quick Start"): a talk's next message
+# (msg manager + 0x6C84) and a choice box being built, so the unseen start-up knows which of
+# Rover's lines and boxes is up.
+fn_801A4F68 all
+fn_8015D27C all
+fn_8015C83C all

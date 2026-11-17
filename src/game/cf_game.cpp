@@ -2,6 +2,7 @@
 // yet (boot work, docs/WII.md "Order of work"); these defaults leave the game untouched.
 #include "recomp/game.h"
 #include "recomp/guest_util.h"
+#include "recomp/gx_bridge.h"
 #include "recomp/online.h"
 #include "recomp/hle.h"
 #include "recomp/runtime.h"
@@ -17,6 +18,7 @@
 #include "game/cf_features.h"
 #include "game/cf_mii.h"
 #include "game/cf_move_in.h"
+#include "game/cf_quick_start.h"
 #include "game/cf_region.h"
 #include "game/cf_save_import.h"
 #include "game/cf_warp.h"
@@ -141,6 +143,13 @@ bool onGuestFrame(Ctx& c) {
     distrib::onGuestFrame(c);  // Nintendo events (docs/DISTRIBUTIONS.md)
     online::onGuestFrame(c);  // CF_ONLINE_* test aids (online.cpp)
     cf::miiOnGuestFrame(c);   // Mii maker: saved Miis to the game's RFL (cf_mii.cpp)
+    // Quick Start (cf_quick_start.cpp): the start-up runs unseen and unpaced until the town.
+    if (const int qs = quickstart::onGuestFrame(c, frame); qs >= 0) {
+        const bool discard = gx::g_discardDraws;  // (set by Quick Start for the next frame)
+        cf::devOnGuestFrame(c);  // (its other test aids; Quick Start decides what is shown)
+        gx::g_discardDraws = discard;
+        return qs == 1;
+    }
     return cf::devOnGuestFrame(c);  // CF_FF fast-forward and other test aids (cf_devaids.cpp)
 }
 u32 guestFrames() { return sFrames.load(std::memory_order_relaxed); }
@@ -252,8 +261,11 @@ HLE(fn_802AA1A8) {
 }
 void filterPad(PADStatus*, int) {}
 bool padHeld() { return false; }
-double retraceSpeed() { return cf::devRetraceSpeed(); }
-float audioGain() { return cf::devRetraceSpeed() > 1.0 ? 0.0f : 1.0f; }
+void filterRemote(int chan, wiimote::State& st) { quickstart::filterRemote(chan, st); }
+bool runDuringShaderHold() { return quickstart::runDuringShaderHold(); }
+double retraceSpeed() { return std::max(quickstart::retraceSpeed(), cf::devRetraceSpeed()); }
+double ioLatencyScale() { return quickstart::ioLatencyScale(); }
+float audioGain() { return retraceSpeed() > 1.0 ? 0.0f : 1.0f; }
 bool audioMirrored() { return false; }
 // One GXCopyDisp per retrace in every scene measured (title, Rover's intro, bus, keyboards,
 // town, town map; docs/WII.md "Frame rate"): 60 fps, 50 for a European game at 50 Hz.
@@ -264,6 +276,7 @@ bool textBoxShown() { return false; }
 int textMode() { return 0; }
 bool viewerOpen() { return false; }
 void drawOverlay() {
+    quickstart::drawOverlay();
     cf::miiDrawOverlay();
     cf::saveimport::drawOverlay();  // CF_SAVE_EXPORT test aid (cf_save_import.cpp)
 }
@@ -276,7 +289,7 @@ s32 overlayEntry(const char* path) { return region::overlayEntry(path); }
 bool isOverlayEntry(s32 e) { return region::isOverlayEntry(e); }
 u32 overlayLength(s32 e) { return region::overlayLength(e); }
 s32 overlayRead(s32 e, void* dst, s32 len, s32 off) { return region::overlayRead(e, dst, len, off); }
-void onBoot(Ctx&) {}
+void onBoot(Ctx& c) { quickstart::onBoot(c); }
 void onFrame() {}
 
 // The game's texture capture (fn_802B7A7C(capture, w, h, fmt, ...): GXInitTexObj over the

@@ -472,3 +472,133 @@ game's own naming, numbering, error paths and JPEG while needing no FAT code.
 - Not run: PAL / Japan / Korea (hooks `all`, all fifteen functions hash- or order-matched in
   their us_map.txt), a real card full / write error from the PC disk, the Wii Message Board path
   for photos (WiiConnect24, separate), a console comparison of the JPEG bytes.
+
+## Quick Start
+
+F1 > Enhancements > General > Start-up: **"Quick Start"** (off by default; settings.ini
+`[quick_start] enabled`) and **"Play as"** (`resident_usa` / `resident_europe` / `resident_japan`
+/ `resident_korea`: empty = the first resident Rover lists, else `<town id>-<player id>` in hex as
+in `[skin_tone]`; one per version, since each has its own save). From the next launch on the game
+opens straight into the town as that resident steps out of the house. Code:
+`src/game/cf_quick_start.cpp`, hooks in `tools/recomp/hooks.txt` (`all`), generic parts in
+`src/recomp/hle_vi.cpp` (unpaced retraces), `sched.cpp` (`cpuIdle`), `main.cpp` (start-up during
+the shader hold), `game.h` (`filterRemote`, `ioLatencyScale`, `runDuringShaderHold`).
+
+### What a normal launch with a saved town does (USA rev 1, measured)
+
+| Stage (byte r13-0x6384) | What the player sees | Save |
+|---|---|---|
+| none (68) | wrist-strap screen (A skips it, else about 20 s), "Online Interactions Not Rated by the ESRB" (USA) | NANDInit; the save worker's boot check reads rvforest.dat (result word r13-0x6930 0 -> 1) and keeps it in memory |
+| DM_TITLE (0x38) | title over a fly-over of the saved town (d_title_demoNP), "Press A" | - |
+| DM_PL_SEL (0x3B) | **Rover in the dark room** (d_a_npc_sp_player_selectNP, `SYS_Start.bmg`): "Ah! Came to play, huh?" (msg 0x01), "Right now, in Frunch, it's 10:00 a.m. ... How about we get started?" (0x02: **Yeah!** / DS Suitcase. / Before playing... / Other things.), "Now, hang on... You are...?" (0x04) with one row per resident, then "I'm new!" (while the town has room) and "Never mind.", Rover's greeting for that resident (0x33..0x4B by days away / birthday; 0x4F = the resident is away in the DS Suitcase: "if I let you in now, you'll lose your DS Suitcase... Is that OK?"), **"Preparing saved data."** (0x65), "Thanks for waiting! Have a grand old time in Frunch!" (0x52 -> one of 0x53..0x58) | building the list already updates each resident (REL fn_24_1BF4 -> fn_24_45C0: greeting flags, the birthday flag 0x45, days since the last visit); after the choice the session data is set (fn_24_45C0 / fn_80091B18, player flags), then the session-start save: the WiiConnect24 step (fn_801783B4 / fn_80178498: wc24dl.vff, /shared2/wc24) and the save write (fn_800D2780: rvforest.dat through /tmp/sys, result word 0 -> 1). It sets resident +0x8650 to 2 (the unsaved-session mark Mr. Resetti reads) and the session's start time (OSTime at 0x73522) |
+| FIELD (0) | fn_80163064(FIELD, the resident's house door, type 0xB, fades 0/2): the town loads behind the closed circle wipe, the circle opens and the resident steps out of the house | - |
+
+"The Rover screen" is this DM_PL_SEL room: for an existing resident Rover only asks whether to get
+started and who you are (the bus ride with Rover is for new residents).
+
+### What Quick Start does
+
+Nothing of the start-up is skipped or replaced: the same code runs, every save read, check and
+write included. Only the presentation and the waiting go:
+
+- From the guest's boot to the town every frame is unseen (draws dropped as with `CF_FF`), the
+  sound is muted, and the VI retrace and the alarms are unpaced: the next retrace comes as soon as
+  every guest thread waits (`sched::cpuIdle`), at the latest after a normal frame, so a worker
+  below the game thread (City Folk's session-start work runs on one, priority 25) gets the CPU the
+  game thread does not use, as within a console frame. (With CF_FF's fixed 1/16-frame step that
+  worker starved: "Preparing saved data" took 7-10 s.) A black frame is shown every 100 ms so the
+  window stays responsive.
+- The modelled NAND and disc latencies are 0 meanwhile (`game::ioLatencyScale`; requests are still
+  answered in order, through the same interrupts and callbacks).
+- It starts while the shader cache loads ("Preparing shaders"; `game::runDuringShaderHold`): the
+  start-up draws nothing, so it needs no pipelines; its first shown frame then waits for the hold.
+  With a cold cache the whole start-up is hidden behind the shader compile.
+- Wii Remote 1 is driven by the port (`game::filterRemote`, after the port's own input): A every
+  other frame (strap screen, title, Rover's lines, the default top row "Yeah!"), the pointer away
+  from the screen (choice boxes keep the game's own cursor), and in the resident list Down / Up
+  until the box's cursor (box + 0x934; rows + 0x930; built by fn_8015D27C, opening frames
+  fn_8015C83C) is on the chosen resident's row, then A. While "You are...?" is still being written
+  A shows the rest of it; from the list's first opening frame on nothing is pressed until the
+  cursor is right, so no press can take another row.
+- It knows every line Rover starts (fn_801A4F68, message manager + 0x6C84). Only the lines of the
+  normal start are accepted: 0x01-0x04, the greetings 0x33-0x4B except 0x4F, 0x51-0x58, 0x65.
+- It ends when the town's circle wipe starts to open (mWipeFader_c::draw fn_802B6B48, cf_hud.cpp:
+  frame +0x44 below 0xFF); the town loaded behind the closed circle unseen. Nothing is pressed
+  once the change to the town is requested. Mr. Resetti, letters, events, the new day and the
+  announcements all happen in the town as after a normal start.
+
+### When the normal start is used instead
+
+Decided at boot from the save on the NAND (cfsave::inspectSave, the game's 14 checksums), or while
+running: Quick Start then stops and the game simply continues from that screen, visible and at
+normal speed, and the player answers.
+
+| Case | What happens | Log |
+|---|---|---|
+| no save yet (new game) | normal start (strap screen, title, Rover's new-player talk) | `not used this launch: there is no save yet` |
+| damaged save | normal start; the game shows its own message | `the save is damaged (...)` |
+| the chosen resident moved out | normal start; F1 shows "(moved out: F177-1234)" | `the chosen resident no longer lives in <town>` |
+| the town has no resident | normal start | `the town has no resident yet` |
+| Shift held (keyboard) at the start or while it runs, or B on Wii Remote 1's controls | normal start from that screen | `Shift / B held` |
+| Rover says anything else (the resident is away in the DS Suitcase, any line not listed above) | stops there: the player sees Rover and answers | `Rover asked something Quick Start does not answer` |
+| the resident list does not match the save | stops at the list | `Rover's resident list is not the save's` |
+| a resident without a house yet (moved in from Wild World, house not bought: Rover keeps them in his room after "Thanks for waiting!") | stops after 600 frames and 1.5 s there | `Rover did not send the resident to the town (no house yet?)` |
+| the save worker reports an error, an unexpected stage, over 30 s | stops | `the save could not be read` / ... |
+
+F1 shows what this launch did ("This launch: Quick Start as rob64, in town 5.4 s after the program
+started." / "normal start (...)" / "stopped (...)"). City Folk starts with Wii Remote 1 only; there
+is no second-player start to handle.
+
+### Test aids
+
+- `CF_QUICK_START=0|1|slot:<n>|name:<name>`: off / on with the setting's resident / on with that
+  save slot (0..3) or resident name (overrides the setting).
+- `CF_QUICK_START_LOG=1`: stages, every message id, choice boxes built / opening, the resident
+  list's cursor and the presses, the town wipe; on any launch also `the town's circle opens N ms
+  after the program started` (timings of normal launches).
+- `CF_QUICK_START_PACED=1`: the same presses at console speed, every frame shown, latencies as
+  modelled: the fastest a player can go through the normal start (the comparison).
+- `CF_QUICK_START_IO=<scale>` (latency during Quick Start, default 0), `CF_QUICK_START_SHOW=<ms>`
+  (black frame interval, default 100), `CF_QUICK_START_HOLD=0` (wait for the shaders first),
+  `CF_FF_IDLE_WAIT=<fraction of a frame>` (the unpaced retrace's longest wait, default 1).
+
+### Verification (2026-11-17, cfrecomp dev builds, scratch folders, copies of the fixtures)
+
+- **Save identical to a normal launch**: `user-town-clean`, run.ps1's fixed seed and frame clock,
+  NAND after reaching the town, normal (continue_any.txt) vs Quick Start: rvforest.dat differs in
+  8 bytes, the session's start time (OSTime at 0x73522; 0.37 s apart, i.e. when the save happened)
+  and the town data's CRC at 0x5EC60 that covers it. Two normal launches give byte-identical
+  rvforest.dat. The same for an unsaved-session NAND (2.0 s apart) and on a new day
+  (CF_CLOCK_START 2026-11-20, greeting 0x3A "it's been a while"), where the start time is also
+  written to four more places (0x27746, 0x2A786, 0x3FDEA, 0x3FF6A), same value. banner.bin,
+  wc24dl.vff, wc24pubk.mod, SYSCONF and the /shared2/wc24 box files are identical; nwc24msg.cfg /
+  .cbk differ between any two launches (the port's per-run WiiConnect24 ids).
+- **Mr. Resetti**: a NAND whose last session was not saved (resetti.txt's recipe): Quick Start
+  arrives at the door, and walking off the doorstep brings Mr. Resetti ("Ah, so it's you...")
+  exactly as the normal start does (resetti.txt route).
+- **Residents**: a two-resident town (rob64 + rob moved in from Wild World, from branch
+  move-in-3's runs): slot 0 -> rob64 in the town; slot 1 -> Down, cursor 1, A -> rob's greeting
+  0x34 ("I knew it! BOY, I'm smart!"), "Preparing saved data", "Thanks for waiting!" and, as in a
+  normal start (docs/MOVE_IN.md), Rover keeps the houseless resident in his room: Quick Start stops
+  there. No town with two residents who both have a house was available (the user's town has one).
+- **Fallbacks**: empty NAND, a save with one flipped byte (town data CRC), a resident key that is
+  not in the save, B held from frame 1: each the normal start (strap screen ...), F1 says why.
+- **Versions**: USA, Europe (PAL build; the fixture as title 52555550: date "27/10"), Japan (JP
+  build; as 5255554a): all reach the town by Quick Start. Korea not built. Shipped program:
+  CityFolkRecomp with a fresh APPDATA (`--setup-auto`, module built in 56 s): 3.6 s from boot to
+  the town.
+- **Timing, program start to the circle opening on the resident** (warm shader cache, USA, a PC
+  with another agent's Dolphin running): normal start with the continue route 65.7 s; the fastest
+  possible player (`CF_QUICK_START_PACED`) 44.6 / 45.0 s; **Quick Start 4.5, 4.9, 5.1, 5.5, 5.7 s**.
+  Typical split: program start to the guest's boot 0.8 s (window, Aurora, module; the shader cache
+  loads 0.4 s meanwhile), strap screen and ESRB 0.5 s, title 1.0 s (about 250 game frames, the
+  town fly-over drawn unseen), Rover to "You are...?" 0.9 s, the resident 0.25 s, "Preparing saved
+  data" 0.5-1.4 s, to the town 0.6 s, the town's load behind the circle 0.05 s. The guest's CPU time
+  is the limit: the game's own frames (scene and layout traversal), the AX reverb callback and the
+  DSP mix keep running (the sound state must stay the game's).
+- **Cold shader cache** (empty cache folder): Quick Start reaches the town 12.5 s in, unseen; the
+  shaders are ready at 25.6 s and the town appears then.
+- Off: no new code path runs (the hooks call the original, latency scale 1, input unchanged).
+
+Open: a town with several housed residents; Korea; a real keyboard's Shift (tested: B by script);
+a console comparison of the session-start save (the port's normal start is the reference here).
