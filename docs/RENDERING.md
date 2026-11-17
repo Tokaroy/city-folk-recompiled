@@ -895,6 +895,107 @@ the dry sand to the trailer's spot at the water's edge (1283,14,3016; the surf m
 runs, so the band under the reflection differs a little between before and after); the bank and
 the river-mouth bridge (survey route).
 
+### Hats, held tools and everything else a character carries (branch reflection-attach, Aurora 0590)
+
+Two user reports (4K, Enhanced lighting Ultra, reflection strength 1.5): "wearing hats on
+reflections causes them to render above the player on the reflections" (the wizard's cap at the
+beach at dusk: the mirrored body and head, the cap as loose star-covered pieces beside and beyond
+the head) and "when you go fishing, the pole is reflected several times" (night, a cliff above a
+pond: a stack of faint parallel copies of the rod in the water). The user asked for every case of
+this kind to be fixed together.
+
+**Cause.** Everything a character wears or holds is a g3d scene object of its own, drawn before or
+after the body, with its own model name: the hat `cap_cap_wizards_kns`, the rod `pole`, the
+umbrella `umb_red_uri`, the glasses `acc_glass_rimmed_ysn` (`CF_MODEL_LOG=1`). 0570 / 0580 only
+classed the body, the head models and the Mii head as characters, so these stayed world draws:
+never drawn into the planar picture, not in the character mask, and the screen-space march (which
+only has the camera's view of them) put their camera-side pieces back upside down: the cap's
+stars as fragments, and on the thin rod a stripe per march step that crossed it (the "several
+reflections"; one rod over flat water has exactly one mirror image). The planar log showed it: the
+player with the cap had the same groups as without (`g2 part of g3`), the cap in none.
+
+**Fix.**
+
+- *Which objects* (`cf_world.cpp` `isAttachModel`, names from the disc's Item / Insect / Fish
+  archives; model names are disc data, the same on all four discs): hats and caps (`cap_*`, Able's own
+  design `cap_md`, `excap*`), accessories (`acc_*`: glasses, masks, beards, worn flowers), umbrellas
+  (`umb_*`), the tools and their gold / silver versions (`net`, `pole` (rod), `scoop` / `t_scoop*`
+  (shovel), `axe`, `jyoro` (watering can), `sling`), toys held in the hand (`firework` (sparkler),
+  `cracker` (party popper), `windmill`, `soapbubble` (bubble wand), balloons), and catches held up
+  (`fsh_*` except the swimming shadows `fsh_shadow*`, `ins_*`, the item models `int_ume_shl_*`,
+  `int_ino_fsh_*`, `int_ino_ins_*`). Their draws are `AURORA_SURFACE_CHARACTER_ATTACH`, one group
+  per object like a head. `hage00` / `hage01` (the bald head) became a part like `boy01a`.
+- *Aurora 0590*: an attachment uses the plane of the nearest whole character within 64 units, as
+  a part (0580) does, so the figure and what it carries are mirrored through one plane, together
+  or not at all, and it is in the character mask (march hits on it are dropped). Unlike a part it
+  is never mirrored on its own plane: the same model with no character near it (a bug flying about,
+  the balloon present floating by) stays with the march as before. Groups noted per frame went from
+  16 to 64 (`MaxCharEntries`; planes stay 16: only whole characters and bridges take one), since a
+  player alone is now up to six groups (body, head or Mii opaque / translucent halves, hat,
+  glasses, tool) and villagers come on top.
+- *Three-letter item names*: `uki` (the bobber), `net` and `axe` passed the three-letter species
+  test and were whole characters on main (own plane; the bobber could have become the rod's
+  "nearest character"). `net` and `axe` are attachments now; the bobber (`uki`, `g_uki`, `s_uki`)
+  is mirrored on its own plane as a static model (`AURORA_SURFACE_MIRROR`, anchored at its vertices
+  like a bridge, never a parent): it floats on the water away from the player, and its reflection
+  under it looks as on main.
+- `AURORA_WORLD_FX_PLANAR_LOG` lines now give each group's mirrored draws / recorded commands
+  (`g3 d1/1`) and `attachment (alone)` for one left with the march.
+
+**What the mirror shows** (`AURORA_WORLD_FX_SHOW=10`, the planar target, with and without the
+attachments): the camera looks down at the player, so the mirror shows the figure from below.
+Facing the camera, a hat on the player's big head shows only its brim and a rim below the
+mirrored face (the crown is hidden behind the head, as in a real reflection seen from above);
+side-on and from further back more of the cone shows. The rod is one clean stroke; the umbrella
+is mirrored with its underside toward the camera.
+
+**A Mii mask and a hat**: wearing a hat or glasses takes the Mii mask off (the game's own
+behaviour: in a copy of the user's town, whose player wears a Mii mask, "Wear" on the wizard's
+cap or the tortoise glasses turns the head into `boy01b` / `boy01a`), so a hat on a Mii head does
+not occur.
+
+Checked (scratch copies of the user's town and user-town-clean, the user's settings: Enhanced
+lighting Ultra, Enhanced world with reflection strength 1.5; before = main):
+
+| Case | Before | After |
+|---|---|---|
+| Wizard's cap, beach, side-on walk (user's town, dusk) | cap as loose star pieces and outline fringes beyond the head | whole mirrored cone on the mirrored head |
+| Wizard's cap, beach, facing the camera | faint cone outline lines below the head | brim rim under the mirrored face (crown hidden behind the head, as from above) |
+| Wizard's cap + rod, cliff-top pond at night (the user's fishing report) | rod as a broken stack of short dashes | one continuous mirrored rod; bobber reflection unchanged |
+| Rod, pond, user-town-clean (night, three casts) | dashed rod | one rod |
+| Top hat + rimmed glasses + red umbrella, beach | red shards of the umbrella, glasses missing | umbrella underside, hat brim and glasses on the mirrored face |
+| Net, shovel (t1), watering can, slingshot, bubble wand | world draws (march pieces) | mirrored with the player (planar log: a part of the body's group) |
+| Axe | already mirrored (classed as a "character" by its three-letter name) | same picture, now an attachment |
+| Bobber and its ripples | mirrored as a "character" | same picture (mirrored on its own plane) |
+| Villagers' umbrellas in rain | march | part of the villager's group (`g5 d2/2 part of g6`) |
+| Rain, snow, night, 120 fps (in-betweens), 21:9, Enhanced lighting off | | the hat follows the figure in every frame |
+| Mii mask + hat / glasses | | the mask comes off (game behaviour) |
+| Caught fish held up (beach route) | | not over water in that route (the catch is on the sand); no group seen for it during the close-up: unverified |
+
+No regression where nothing is carried (user's town copy, Mii mask, main vs branch): the cliff-top
+pond (reflection-head's cliff route, the Mii face), the beach's shallow fade (`TP=1283/14/<z>`) and
+the river-mouth bridge (deck mirrored, the player's head under it) look the same; the frames are
+not pixel-identical between any two runs (the player's idle animation and the water pattern run on
+real time), the differences lie only there.
+
+Other versions: PAL and Japanese dev builds with renamed copies of user-town-clean (title folders
+52555550 / 5255554A), the wizard's cap at the beach: the same groups as USA (`cap_cap_wizards_kns`
+a part of the body's group) and the same reflection. Korea not built.
+
+GPU (RTX 3090 Ti, 3840x2160, user's settings, the wizard's cap at the water's edge facing the
+camera, `AURORA_GPU_PROFILE=5`, last four 5 s windows, two main / branch pairs; other agents'
+instances were running, the second pair under more load): "World FX planar characters" 0.031 ->
+0.035 and 0.042 -> 0.046 ms (+0.004 ms: one more draw), "World FX plane" and "World FX surfaces"
+unchanged; busy 6.32 -> 6.43 and 8.42 -> 8.44 ms per frame (within the run-to-run spread).
+
+Test aids: `CF_WFX_ATTACH=0` (attachments are world draws again, and the bobber a character: the
+main picture, A/B). Routes (scratch, see the checks below): the pockets give items with
+`CF_GIVE_ITEM=5600:<code>` (codes from item.bin, 0x9000 + number x 4: wizard's cap AC9C, top hat
+AC7C, rimmed glasses AF68, red umbrella AAA8, net CEA0, fishing rod CEA4, watering can CEAC, shovel
+CEB0, bubble wand CEE8, slingshot CEEC, axe CE80) into the first free slot (top right in
+user-town-clean, @0.56/-0.26; the next ones are row 2 from the left, x -0.43 / -0.21 / 0.01 / 0.23,
+y 0.06; the second menu entry, Wear / Carry, is +0.21 / -0.12 from the slot).
+
 ### Cost (RTX 3090 Ti, rain in the town with every option on incl. tilt-shift; other agents' game
 instances were running on the same GPU, so these are upper bounds)
 
@@ -938,7 +1039,7 @@ wet ground, puddles, ripples, haze, leaves), snow (Jan 15 11:00: sparkle, snowfl
 (camera / projection / draws at the scene end), `AURORA_WORLD_FX_MTX_LOG=1` (a surface draw's
 matrix), `AURORA_WORLD_FX_SHOW=<n>` debug views: 1 surface mask, 2 depth / focus row, 3 mask alpha +
 wetness, 4 ground branch, 5 reflection hit share / weight, 6 focus distance / scale, 7 raw depth,
-8 why each water ray's march ends, 9 planar character here / march hit dropped as a character / march hit, 10 the planar character target as drawn (0570), 11 blue share / depth ramp / reflection weight over water (0580). `AURORA_WORLD_FX_PLANAR=0` turns the planar characters off (A/B), `AURORA_WORLD_FX_PLANAR_LOG=1` (per frame: each character group mirrored or not and its plane height; 0580), `AURORA_WORLD_FX_PART_PLANES=own` (heads get their own plane again, A/B), `CF_WFX_CHAR_LOG=1` (objects tested as characters), `CF_NO_MII_MASK=1` (USA: the worn Mii mask is not shown from the next scene load on; the plain villager head). `CF_WFX_SET` takes `;` or `,` between keys (`,` inside
+8 why each water ray's march ends, 9 planar character here / march hit dropped as a character / march hit, 10 the planar character target as drawn (0570), 11 blue share / depth ramp / reflection weight over water (0580). `AURORA_WORLD_FX_PLANAR=0` turns the planar characters off (A/B), `AURORA_WORLD_FX_PLANAR_LOG=1` (per frame: each character group mirrored or not and its plane height; 0580), `AURORA_WORLD_FX_PART_PLANES=own` (heads get their own plane again, A/B), `CF_WFX_CHAR_LOG=1` (objects tested as characters), `CF_WFX_ATTACH=0` (hats, glasses, held tools and the bobber as on main: world draws; 0590), `CF_NO_MII_MASK=1` (USA: the worn Mii mask is not shown from the next scene load on; the plain villager head). `CF_WFX_SET` takes `;` or `,` between keys (`,` inside
 run.ps1's -Env).
 Weather and season: `CF_WEATHER_FAKE=rain|heavyrain|snow|clear`, `CF_CLOCK_START` (docs/CALENDAR.md,
 tools/routes/run.ps1).

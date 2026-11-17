@@ -337,14 +337,57 @@ void emitKind(u8 k) {
 // the kind starts a group, so two characters drawn back to back get a WORLD in between).
 // Characters: the players' 'boy' / 'girl' models and their heads ('boy01a', ...), the villagers' and NPCs' three-letter species
 // models ('kal', 'cbr', 'squ', ...), and the worn Mii mask (RFL head, its own draw: cf_tags.cpp).
+// Test aid CF_WFX_ATTACH=0 (branch reflection-attach): attachments are world draws again and the
+// three-letter item models characters, as on main (A/B).
+const bool sAttachOn = [] {
+    const char* v = std::getenv("CF_WFX_ATTACH");
+    return !(v && *v == '0');
+}();
 bool isCharacterModel(const std::string& n) {
-    // ('boy01a' etc.: the player's own head when no Mii mask is worn)
-    if (n.compare(0, 3, "boy") == 0 || n.compare(0, 4, "girl") == 0) return true;
+    // ('boy01a' etc.: the player's own head when no Mii mask is worn; 'hage00' / 'hage01': the bald head)
+    if (n.compare(0, 3, "boy") == 0 || n.compare(0, 4, "girl") == 0 || (sAttachOn && n.compare(0, 4, "hage") == 0)) return true;
     if (n.size() != 3) return false;
+    // (three-letter item models, not species: the bobber 'uki' (mirrored on its own: isFloatModel),
+    // the 'net' and the 'axe' (attachments); on main they were classed as characters by their length)
+    if (sAttachOn && (n == "uki" || n == "net" || n == "axe")) return false;
     for (char ch : n)
         if (ch < 'a' || ch > 'z') return false;
     return true;
 }
+
+// Things attached to or carried by a character, drawn as scene objects of their own (branch
+// reflection-attach, Aurora 0590; names from the disc's Item/ and Insect/Fish archives, the same on
+// every version): hats and caps (Item/Cap 'cap_*', OrgCap 'cap_md' = a hat of the player's own
+// design, Excap 'excap99x'), accessories (Item/Acc 'acc_*': glasses, masks, beards; worn flowers
+// 'acc_stm_flw_*'), umbrellas ('umb_*', 'umb_md'), tools (net, rod 'pole', shovel 'scoop',
+// 'axe', watering can 'jyoro', slingshot 'sling'; with their g_ / s_ gold and silver versions,
+// 't_scoop*' the shovel with sand), toys held in the hand (sparkler 'firework', party popper
+// 'cracker', pinwheel 'windmill', bubble wand 'soapbubble', balloons), and catches held up (fish
+// 'fsh_*' but not the shadows 'fsh_shadow*', bugs 'ins_*', shells / fish / bugs as items
+// 'int_ume_shl_*', 'int_ino_fsh_*', 'int_ino_ins_*'). Not: the bobber 'uki' (floats on the water
+// away from the player: isFloatModel), the slingshot's flying pellet 'sling_bullet'. Before this branch they
+// were world draws: the screen-space march put the camera-side pieces of a hat back upside down
+// above the mirrored head, and banded on a thin fishing rod (several faint copies of it).
+// Aurora mirrors one only with a whole character within 64 units (AURORA_SURFACE_CHARACTER_ATTACH):
+// the same model flying (a bug, a balloon present) or on its own stays with the march.
+bool isAttachModel(const std::string& n) {
+    static const char* const kPrefix[] = {"cap_", "excap", "acc_", "umb_", "int_ume_shl_", "int_ino_fsh_", "int_ino_ins_", "ins_", "balloon"};
+    for (const char* p : kPrefix)
+        if (n.rfind(p, 0) == 0) return true;
+    if (n.rfind("fsh_", 0) == 0) return n.rfind("fsh_shadow", 0) != 0;
+    static const char* const kTool[] = {"net",   "g_net",   "s_net",   "pole",       "g_pole", "s_pole",    "scoop",   "g_scoop",
+                                        "s_scoop", "t_scoop", "t_scoop_sand", "axe",  "g_axe",  "s_axe",     "jyoro",   "g_jyoro",
+                                        "s_jyoro", "sling",   "g_sling",   "s_sling",  "firework", "cracker", "windmill", "soapbubble"};
+    for (const char* t : kTool)
+        if (n == t) return true;
+    return false;
+}
+// The fishing bobber ('uki', gold / silver 'g_uki' / 's_uki'; ItemToolSub/Uki.brres) floats on the
+// water away from the player: mirrored on its own plane like a bridge (AURORA_SURFACE_MIRROR: one
+// group, anchored at its vertices, never a parent for a part), so the march does not band on it
+// either. (On main it was a whole character by its three-letter name: the same picture, but the
+// rod could take the bobber's plane as its "nearest character".)
+bool isFloatModel(const std::string& n) { return n == "uki" || n == "g_uki" || n == "s_uki"; }
 
 // ---- camera ----------------------------------------------------------------------------------
 float rdf(u32 a) { return std::bit_cast<float>(rd32(a)); }
@@ -890,15 +933,28 @@ bool world::characterBegin(u32 obj) {
             sReflOn ? 1 : 0, sMain ? 1 : 0);
     if (!sReflOn || !sMain) return false;
     const std::string name = obj ? cflight::modelNameChecked(obj) : std::string();
-    if (obj && !isCharacterModel(name)) return false;
+    const bool attach = obj && sAttachOn && !isCharacterModel(name) && isAttachModel(name);
+    const bool floating = obj && sAttachOn && isFloatModel(name);
+    if (obj && !attach && !floating && !isCharacterModel(name)) return false;
+    if (floating) {
+        if (sCharDepth++ == 0) {
+            if (sKind == AURORA_SURFACE_CHARACTER || sKind == AURORA_SURFACE_CHARACTER_PART || sKind == AURORA_SURFACE_CHARACTER_ATTACH ||
+                (sKind & AURORA_SURFACE_MIRROR) != 0)
+                emitKind(AURORA_SURFACE_WORLD);  // (a kind change between two groups)
+            emitKind(u8(AURORA_SURFACE_WORLD | AURORA_SURFACE_MIRROR));
+        }
+        return true;
+    }
     if (sCharDepth++ == 0) {
         // A part of a character (branch reflection-head, Aurora 0580): the player's own head model
         // ('boy01a', ...: its own object, drawn before the body) and the worn Mii head are mirrored
         // through the plane of the character they belong to; with a plane of their own the head's
         // water lookup could fail while the body's found water (a reflection without its head).
-        const bool part = obj == 0 || ((name.compare(0, 3, "boy") == 0 || name.compare(0, 4, "girl") == 0) && name != "boy" && name != "girl");
-        const u8 kind = part ? AURORA_SURFACE_CHARACTER_PART : AURORA_SURFACE_CHARACTER;
-        if (sKind == AURORA_SURFACE_CHARACTER || sKind == AURORA_SURFACE_CHARACTER_PART) emitKind(AURORA_SURFACE_WORLD);
+        const bool part = obj == 0 || ((name.compare(0, 3, "boy") == 0 || name.compare(0, 4, "girl") == 0) && name != "boy" && name != "girl") ||
+                          name.compare(0, 4, "hage") == 0;
+        const u8 kind = attach ? AURORA_SURFACE_CHARACTER_ATTACH : part ? AURORA_SURFACE_CHARACTER_PART : AURORA_SURFACE_CHARACTER;
+        if (sKind == AURORA_SURFACE_CHARACTER || sKind == AURORA_SURFACE_CHARACTER_PART || sKind == AURORA_SURFACE_CHARACTER_ATTACH)
+            emitKind(AURORA_SURFACE_WORLD);
         emitKind(kind);
     }
     return true;
