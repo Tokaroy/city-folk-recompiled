@@ -13,6 +13,7 @@
 // Written from the public IOS interface documentation, not from another emulator's code.
 #include "recomp/ios.h"
 
+#include "recomp/game.h"
 #include "recomp/hle.h"
 #include "recomp/runtime.h"
 #include "recomp/sched.h"
@@ -111,7 +112,8 @@ Clock::time_point schedule(Queue q, double cost) {
     const auto now = Clock::now();
     auto& busy = sBusyUntil[size_t(q)];
     const auto start = std::max(now, busy);
-    busy = start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(cost * latencyScale()));
+    busy = start + std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double>(cost * latencyScale() * game::ioLatencyScale()));
     return busy;
 }
 

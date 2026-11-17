@@ -525,6 +525,11 @@ void postIrq(std::function<void(Ctx&)> fn) {
     handOff(pick(nullptr));
 }
 
+bool cpuIdle() {
+    std::lock_guard lk(sM);
+    return sRunning == nullptr;
+}
+
 void dumpThreads() {
     std::lock_guard lk(sM);
     log("[sched] running=%08X irqPending=%d", sRunning == &sIrqMarker ? 0xFFFFFFFF : sRunning ? sRunning->guest : 0,

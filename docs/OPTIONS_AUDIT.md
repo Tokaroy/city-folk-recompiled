@@ -93,6 +93,7 @@ in depth (named), here only sweep / persistence / tooltip.
 |---|---|---|---|
 | Show FPS | off | clicked live in town: "60 fps" in the window capture | OK |
 | Pause when window loses focus | on | - | not testable (automated runs never pause by design) |
+| Quick Start, Play as | off, first resident | settings.ini + `CF_QUICK_START`, F1 capture at 4K; fallbacks (no save, damaged, moved out, B held) | owner quick-start (docs/FEATURES.md "Quick Start") |
 | Grass wear, Regrow all grass now | Original | persistence; sweep at the title | **fixed**: the Regrow button did nothing outside a loaded town; now greyed out there with the reason |
 | Skin tone | Game | sweep, tooltip | **fixed**: buttons 2-7 said "Fixed tone 3 of 8 ()" |
 | Hemisphere, Real-time weather | Northern, off | persistence | owner (calendar-1); weather left off (network) |

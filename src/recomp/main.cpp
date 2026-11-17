@@ -592,6 +592,9 @@ int main(int argc, char* argv[]) {
             const double beginMs = std::chrono::duration<double, std::milli>(SteadyClock::now() - beginAt).count();
             lastPresented = SteadyClock::now();
             presentStallReported = false;
+            // A start-up whose frames are not shown (City Folk's Quick Start: draws dropped, unpaced)
+            // runs while the shaders load; its first shown frame then waits for the hold to end.
+            if (game::runDuringShaderHold() && !frame::hostFrame()) break;
             menu::draw();  // applies settings changes (they may change what is being compiled)
             precache::drawHold();
             precache::frame();

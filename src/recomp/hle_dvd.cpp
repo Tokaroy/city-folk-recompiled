@@ -75,7 +75,7 @@ double readLatency(u32 bytes) {
         const char* env = std::getenv("CF_DVD_SPEED");  // 1 = console speed
         return env ? 1.0 / std::atof(env) : 0.1;
     }();
-    return scale * (0.010 + bytes / 3.0e6);
+    return scale * (0.010 + bytes / 3.0e6) * game::ioLatencyScale();  // (Quick Start: < 1)
 }
 
 HostFile* hostFile(u32 guest) {

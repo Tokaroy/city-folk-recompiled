@@ -10,6 +10,7 @@
 #include "recomp/game.h"
 #include "recomp/gx_bridge.h"
 #include "game/cf_move_in.h"
+#include "game/cf_quick_start.h"
 #include "game/cf_region.h"
 
 #include "port/install.h"
@@ -1547,6 +1548,7 @@ void generalEnhancementsTab() {
         applyWindowSettings();
     }
     ImGui::SetItemTooltip("The game pauses (and goes quiet) while another window is in front.");
+    recomp::quickstart::menuSection(sDirty);  // src/game/cf_quick_start.cpp
 }
 
 // Game features (docs/ROADMAP.md "Feature list", docs/FEATURES.md, docs/CALENDAR.md): every one
